@@ -443,17 +443,17 @@
                         غرفة التحكم - الإعدادات والإضافة
                     </label>
                     <form id="link-form" class="flex gap-2 mb-4">
-                        <div class="relative flex-1">
-                            <div class="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                                <i data-lucide="link" class="h-5 w-5 text-gray-500"></i>
-                            </div>
-                            <input type="url" id="link-input" dir="ltr" placeholder="تيك توك، يوتيوب، ساوند كلاود، أرشيف..." class="block w-full pl-3 pr-10 py-3 bg-[#0a0a0a] border border-[#333] rounded-xl text-left text-gray-200 focus:ring-2 focus:ring-pink-500 focus:border-transparent transition-all disabled:opacity-50 outline-none" />
-                        </div>
-                        <button type="submit" id="btn-submit" class="px-6 py-3 bg-gradient-to-r from-cyan-600 to-pink-600 hover:from-cyan-500 hover:to-pink-500 disabled:from-[#333] disabled:to-[#333] disabled:text-gray-500 text-white font-medium rounded-xl flex items-center justify-center gap-2 transition-all min-w-[120px]" disabled>
-                            <i id="submit-icon" data-lucide="plus" class="w-5 h-5"></i>
-                            <span id="submit-text" class="hidden sm:inline">إضافة</span>
-                        </button>
-                    </form>
+<div class="relative flex-1">
+<div class="absolute inset-top-3 right-0 pr-3 pt-3 flex items-center pointer-events-none">
+<i data-lucide="link" class="h-5 w-5 text-gray-500"></i>
+</div>
+<textarea id="link-input" dir="ltr" placeholder="ضع رابطاً واحداً، أو الصق عدة روابط تحت بعضها (كل رابط في سطر)..." class="block w-full pl-3 pr-10 py-3 h-14 min-h-[56px] max-h-[150px] bg-[#0a0a0a] border border-[#333] rounded-xl text-left text-gray-200 focus:ring-2 focus:ring-pink-500 focus:border-transparent transition-all disabled:opacity-50 outline-none resize-y custom-scrollbar"></textarea>
+</div>
+<button type="submit" id="btn-submit" class="px-6 py-3 bg-gradient-to-r from-cyan-600 to-pink-600 hover:from-cyan-500 hover:to-pink-500 disabled:from-[#333] disabled:to-[#333] disabled:text-gray-500 text-white font-medium rounded-xl flex flex-col items-center justify-center gap-1 transition-all min-w-[120px] h-14" disabled>
+<i id="submit-icon" data-lucide="plus" class="w-5 h-5"></i>
+<span id="submit-text" class="text-xs font-bold">إضافة</span>
+</button>
+</form>
                     <p id="error-msg" class="text-red-400 text-sm mb-4 hidden"></p>
 
                     <div class="flex flex-col gap-3 border-t border-[#333] pt-4">
@@ -3382,71 +3382,103 @@ navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
         }
 
         if (linkForm) {
-            linkForm.addEventListener('submit', async (e) => {
-                e.preventDefault();
-                if(!linkInput) return;
-                const url = linkInput.value.trim();
-                if(errorMsg) errorMsg.classList.add('hidden');
-                
-                const viewingGroup = window.getViewingGroup();
-                if(!viewingGroup || viewingGroup.isLocal) {
-                    alert('لا يمكنك إضافة مقاطع من الرابط مباشرة إلى القائمة الخاصة بك. أضفها في قسم عادي أولاً ثم أضفها لقائمتك الخاصة بضغط زر الإضافة.');
-                    return;
-                }
-                
-                const alreadyExists = viewingGroup.tracks.some(t => t.url === url);
-                if (alreadyExists) {
-                    if(errorMsg) {
-                        errorMsg.innerText = 'هذا الرابط تمت إضافته من قبل في هذه المجموعة!';
-                        errorMsg.classList.remove('hidden');
+linkForm.addEventListener('submit', async (e) => {
+e.preventDefault();
+if(!linkInput) return;
+
+            const urlsText = linkInput.value.trim();
+            if(errorMsg) errorMsg.classList.add('hidden');
+            
+            const viewingGroup = window.getViewingGroup();
+            if(!viewingGroup || viewingGroup.isLocal) {
+                alert('لا يمكنك إضافة مقاطع مباشرة إلى القائمة الخاصة بك. اختر قسماً عادياً أولاً.');
+                return;
+            }
+
+            const rawUrls = urlsText.split(/[\n\s]+/).map(u => u.trim()).filter(u => u.startsWith('http'));
+            
+            if (rawUrls.length === 0) {
+                if(errorMsg) { errorMsg.innerText = 'يرجى إدخال روابط صحيحة تبدأ بـ http'; errorMsg.classList.remove('hidden'); }
+                return;
+            }
+
+            const newUrls = rawUrls.filter(url => !viewingGroup.tracks.some(t => t.url === url));
+            
+            if (newUrls.length === 0) {
+                if(errorMsg) { errorMsg.innerText = 'جميع هذه الروابط مضافة بالفعل في هذا القسم!'; errorMsg.classList.remove('hidden'); }
+                return;
+            }
+
+            isLoading = true;
+            if(btnSubmit) {
+                btnSubmit.disabled = true;
+                btnSubmit.innerHTML = `
+                    <i data-lucide="loader-2" class="w-5 h-5 animate-spin mb-1"></i>
+                    <span class="text-[10px] font-bold" id="bulk-progress" dir="ltr">0 / ${newUrls.length}</span>
+                `;
+                lucide.createIcons({ root: btnSubmit.parentElement });
+            }
+            if(linkInput) linkInput.disabled = true;
+
+            let allFetchedTracks = [];
+            let failedCount = 0;
+
+            try {
+                for (let i = 0; i < newUrls.length; i++) {
+                    const url = newUrls[i];
+                    if(document.getElementById('bulk-progress')) {
+                        document.getElementById('bulk-progress').innerText = `${i + 1} / ${newUrls.length}`;
                     }
-                    return;
+                    
+                    try {
+                        const tracks = await window.fetchLinkInfo(url);
+                        if (tracks && tracks.length > 0) {
+                            allFetchedTracks.push(...tracks);
+                        }
+                    } catch(e) {
+                        console.warn("Failed to fetch:", url, e);
+                        failedCount++;
+                    }
+                    
+                    if (i < newUrls.length - 1) {
+                        await new Promise(r => setTimeout(r, 1500));
+                    }
                 }
 
-                isLoading = true;
+                if (allFetchedTracks.length > 0) {
+                    if (allFetchedTracks.length === 1) {
+                        window.openPromptModal('تأكيد اسم المقطع:', 'أدخل الاسم', (finalTitle) => {
+                            allFetchedTracks[0].title = finalTitle || allFetchedTracks[0].title;
+                            window.finishAdding(viewingGroup, allFetchedTracks);
+                        }, allFetchedTracks[0].title);
+                    } else {
+                        window.openMultiTrackModal(allFetchedTracks, (updatedTracks) => {
+                            window.finishAdding(viewingGroup, updatedTracks);
+                            if (failedCount > 0) window.showToast(`نجح ${updatedTracks.length} وفشل سحب ${failedCount} رابط.`, 'info');
+                        });
+                    }
+                } else {
+                    throw new Error('لم نتمكن من سحب أي مقطع من الروابط المدخلة.');
+                }
+            } catch (err) {
+                if(errorMsg) {
+                    errorMsg.innerText = err.message || 'حدث خطأ أثناء معالجة الروابط.';
+                    errorMsg.classList.remove('hidden');
+                }
+            } finally {
+                isLoading = false;
+                if(linkInput) { linkInput.disabled = false; linkInput.value = ''; }
                 if(btnSubmit) {
-                    btnSubmit.disabled = true;
+                    btnSubmit.disabled = false;
                     btnSubmit.innerHTML = `
-                        <i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i>
-                        <span class="hidden sm:inline">جاري السحب</span>
+                        <i id="submit-icon" data-lucide="plus" class="w-5 h-5"></i>
+                        <span class="text-xs font-bold">إضافة</span>
                     `;
                     lucide.createIcons({ root: btnSubmit.parentElement });
                 }
-                if(linkInput) linkInput.disabled = true;
-
-                try {
-                    const tracks = await window.fetchLinkInfo(url);
-                    if (tracks && tracks.length > 0) {
-                        if (tracks.length === 1) {
-                            window.openPromptModal('تأكيد/تعديل اسم المقطع:', 'أدخل الاسم', (finalTitle) => {
-                                tracks[0].title = finalTitle || tracks[0].title;
-                                window.finishAdding(viewingGroup, tracks);
-                            }, tracks[0].title);
-                        } else {
-                            window.openMultiTrackModal(tracks, (updatedTracks) => {
-                                window.finishAdding(viewingGroup, updatedTracks);
-                            });
-                        }
-                    }
-                } catch (err) {
-                    if(errorMsg) {
-                        errorMsg.innerText = err.message || 'حدث خطأ أثناء الاتصال بالخادم.';
-                        errorMsg.classList.remove('hidden');
-                    }
-                } finally {
-                    isLoading = false;
-                    if(linkInput) linkInput.disabled = false;
-                    if(btnSubmit) {
-                        btnSubmit.disabled = false;
-                        btnSubmit.innerHTML = `
-                            <i data-lucide="plus" class="w-5 h-5"></i>
-                            <span class="hidden sm:inline">إضافة</span>
-                        `;
-                        lucide.createIcons({ root: btnSubmit.parentElement });
-                    }
-                }
-            });
-        }
+            }
+        });
+    }
 
         window.finishAdding = function(viewingGroup, newTracksArray) {
             if(!newTracksArray || newTracksArray.length === 0) return;
