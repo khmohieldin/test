@@ -1127,48 +1127,49 @@ window.updatePlayerUI();
                     throw new Error('فشل جلب بيانات الأرشيف.');
                 }
             } else if (isSoundCloud) {
-if (url.includes('/sets/')) {
+const cleanUrl = url.split('?')[0]; // تنظيف الرابط من إضافات القوائم
+if (cleanUrl.includes('/sets/')) {
 throw new Error('عذراً، الأداة حالياً تدعم سحب المقاطع الفردية فقط من ساوند كلاود وليس القوائم (Sets). يرجى إضافة رابط المقطع مباشرة.');
 }
 let audioUrl = '';
 let title = 'مقطع ساوند كلاود';
-                let author = 'ساوند كلاود';
-                let coverUrl = '';
+let author = 'ساوند كلاود';
+let coverUrl = '';
 
-                try {
-                    const noembedRes = await fetch(`https://noembed.com/embed?url=${url}`);
-                    const noembedData = await noembedRes.json();
-                    if(noembedData.title) title = noembedData.title;
-                    if(noembedData.author_name) author = noembedData.author_name;
-                    if(noembedData.thumbnail_url) coverUrl = noembedData.thumbnail_url;
-                } catch(e) {}
+            try {
+                const noembedRes = await fetch(`https://noembed.com/embed?url=${cleanUrl}`);
+                const noembedData = await noembedRes.json();
+                if(noembedData.title) title = noembedData.title;
+                if(noembedData.author_name) author = noembedData.author_name;
+                if(noembedData.thumbnail_url) coverUrl = noembedData.thumbnail_url;
+            } catch(e) {}
 
-                const scFetchers = [
-                    async () => { const r = await fetch(`https://api.vreden.my.id/api/soundcloud?url=${encodeURIComponent(url)}`); const d = await r.json(); return d?.result?.download || d?.result?.url; },
-                    async () => { const r = await fetch(`https://api.siputzx.my.id/api/d/soundcloud?url=${encodeURIComponent(url)}`); const d = await r.json(); return d?.data?.url; }
-                ];
+            const scFetchers = [
+                async () => { const r = await fetch(`https://api.vreden.my.id/api/soundcloud?url=${encodeURIComponent(cleanUrl)}`); const d = await r.json(); return d?.result?.download || d?.result?.url; },
+                async () => { const r = await fetch(`https://api.siputzx.my.id/api/d/soundcloud?url=${encodeURIComponent(cleanUrl)}`); const d = await r.json(); return d?.data?.url; }
+            ];
 
-                audioUrl = await new Promise((resolve) => {
-                    let pending = scFetchers.length;
-                    let resolved = false;
-                    scFetchers.forEach(async (fn) => {
-                        try {
-                            const resUrl = await fn();
-                            if (!resolved && resUrl && typeof resUrl === 'string' && resUrl.startsWith('http')) {
-                                resolved = true;
-                                resolve(resUrl);
-                            }
-                        } catch (e) {}
-                        finally {
-                            pending--;
-                            if (pending === 0 && !resolved) resolve('soundcloud_widget'); 
+            audioUrl = await new Promise((resolve) => {
+                let pending = scFetchers.length;
+                let resolved = false;
+                scFetchers.forEach(async (fn) => {
+                    try {
+                        const resUrl = await fn();
+                        if (!resolved && resUrl && typeof resUrl === 'string' && resUrl.startsWith('http')) {
+                            resolved = true;
+                            resolve(resUrl);
                         }
-                    });
+                    } catch (e) {}
+                    finally {
+                        pending--;
+                        if (pending === 0 && !resolved) resolve('soundcloud_widget'); 
+                    }
                 });
+            });
 
-                return [{
-                    id: `sc_${Date.now()}`,
-                    url: url,
+            return [{
+                id: `sc_${Date.now()}`,
+                url: cleanUrl,
                     title: title,
                     author: author,
                     audioUrl: audioUrl, 
