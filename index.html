@@ -1072,6 +1072,46 @@ window.updatePlayerUI();
                     throw new Error('لم نتمكن من جلب المقطع من تيك توك.');
                 }
             } else if (isArchive) {
+                // دعم روابط البحث (Search) لسحب عدة حلقات دفعة واحدة
+                if (url.includes('/search')) {
+                    const urlObj = new URL(url);
+                    const query = urlObj.searchParams.get('query');
+                    if (!query) throw new Error('رابط البحث لا يحتوي على استعلام (Query).');
+                    
+                    const searchUrl = `https://archive.org/advancedsearch.php?q=${encodeURIComponent(query)}&fl[]=identifier,title,creator&sort[]=addeddate+desc&output=json&rows=50`;
+                    const searchRes = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(searchUrl)}`);
+                    const searchJson = await searchRes.json();
+                    
+                    if (!searchJson.response.docs || searchJson.response.docs.length === 0) {
+                        throw new Error('لم يتم العثور على نتائج لهذا البحث.');
+                    }
+
+                    window.showToast(`تم العثور على ${searchJson.response.docs.length} نتيجة، جاري سحب الحلقات...`, 'info');
+
+                    let results = [];
+                    for (let docItem of searchJson.response.docs) {
+                        try {
+                            const metaRes = await fetch(`https://archive.org/metadata/${docItem.identifier}`);
+                            const metaJson = await metaRes.json();
+                            const audioFile = metaJson.files.find(f => f.name.toLowerCase().endsWith('.mp3') || f.format === 'VBR MP3' || f.format === 'MP3');
+                            
+                            if (audioFile) {
+                                results.push({
+                                    id: `arc_${docItem.identifier}_${Date.now()}`,
+                                    url: `https://archive.org/details/${docItem.identifier}`,
+                                    title: metaJson.metadata.title || docItem.identifier,
+                                    author: metaJson.metadata.creator || 'Archive.org',
+                                    audioUrl: `https://archive.org/download/${docItem.identifier}/${audioFile.name}`,
+                                    cover: `https://archive.org/services/img/${docItem.identifier}`,
+                                    addedAt: Date.now() + results.length
+                                });
+                            }
+                        } catch(e) { console.warn("Skip item:", docItem.identifier); }
+                    }
+                    return results;
+                }
+
+                // المعالجة العادية لروابط المجلدات (Details)
                 const match = url.match(/archive\.org\/details\/([^\/\?#]+)/);
                 if (!match) throw new Error('رابط الأرشيف غير صالح');
                 const archiveId = match[1];
@@ -1088,44 +1128,20 @@ window.updatePlayerUI();
                     );
 
                     if (audioFiles.length > 0) {
-                        let creator = 'Archive.org';
-                        if (json.metadata.creator) {
-                            creator = Array.isArray(json.metadata.creator) ? json.metadata.creator.join(', ') : json.metadata.creator;
-                        } else if (json.metadata.title) {
-                            creator = json.metadata.title;
-                        }
-
-                        const uniqueTracks = [];
-                        const seenTitles = new Set();
-
-                        for (const file of audioFiles) {
-                            const title = file.title || file.name.replace(/\.[^/.]+$/, "");
-                            const normalizedTitle = title.trim().toLowerCase();
-
-                            if (!seenTitles.has(normalizedTitle)) {
-                                seenTitles.add(normalizedTitle);
-                                uniqueTracks.push({
-                                    id: `${archiveId}_${Date.now()}_${uniqueTracks.length}`,
-                                    url: url,
-                                    title: title, 
-                                    author: creator,
-                                    audioUrl: `https://archive.org/download/${archiveId}/${file.name}`,
-                                    cover: `https://archive.org/services/img/${archiveId}`,
-                                    details: '',
-                                    customCover: '',
-                                    addedAt: Date.now() + uniqueTracks.length
-                                });
-                            }
-                        }
-                        uniqueTracks.sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' }));
-                        uniqueTracks.forEach((track, index) => { track.addedAt = Date.now() + index; });
+                        let creator = json.metadata.creator || 'Archive.org';
+                        const uniqueTracks = audioFiles.map((file, idx) => ({
+                            id: `${archiveId}_${Date.now()}_${idx}`,
+                            url: url,
+                            title: file.title || file.name.replace(/\.[^/.]+$/, ""),
+                            author: creator,
+                            audioUrl: `https://archive.org/download/${archiveId}/${file.name}`,
+                            cover: `https://archive.org/services/img/${archiveId}`,
+                            addedAt: Date.now() + idx
+                        }));
                         return uniqueTracks;
-                    } else {
-                        throw new Error('لم يتم العثور على ملفات صوتية مدعومة.');
                     }
-                } else {
-                    throw new Error('فشل جلب بيانات الأرشيف.');
                 }
+                throw new Error('لم نتمكن من سحب ملفات صوتية من هذا الرابط.');
             } else if (isSoundCloud) {
 const cleanUrl = url.split('?')[0]; // تنظيف الرابط من إضافات القوائم
 if (cleanUrl.includes('/sets/')) {
