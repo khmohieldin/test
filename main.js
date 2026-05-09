@@ -193,6 +193,29 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
         };
 
         // --- Theme Logic ---
+        window.toggleFontSize = () => {
+            const html = document.documentElement;
+            let currentSize = localStorage.getItem('fontSize') || 'normal';
+            let nextSize = 'md';
+            let textLabel = 'خط: متوسط';
+
+            if (currentSize === 'normal') {
+                nextSize = 'md'; textLabel = 'خط: متوسط';
+            } else if (currentSize === 'md') {
+                nextSize = 'lg'; textLabel = 'خط: كبير';
+            } else {
+                nextSize = 'normal'; textLabel = 'حجم الخط';
+            }
+
+            html.classList.remove('font-md', 'font-lg');
+            if (nextSize !== 'normal') html.classList.add(`font-${nextSize}`);
+            
+            localStorage.setItem('fontSize', nextSize);
+            
+            const btnText = document.getElementById('font-size-text');
+            if (btnText) btnText.innerText = textLabel;
+        }
+
         window.toggleTheme = () => {
             const html = document.documentElement;
             if (html.classList.contains('dark')) {
@@ -215,6 +238,16 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
             if(desktopIcon) desktopIcon.setAttribute('data-lucide', iconName);
             if(desktopText) desktopText.innerText = text;
             if(mobileIcon) mobileIcon.setAttribute('data-lucide', iconName);
+
+            // Update Font Size Label on load
+            const savedFontSize = localStorage.getItem('fontSize');
+            const fontTextEl = document.getElementById('font-size-text');
+            if (fontTextEl) {
+                if (savedFontSize === 'md') fontTextEl.innerText = 'خط: متوسط';
+                else if (savedFontSize === 'lg') fontTextEl.innerText = 'خط: كبير';
+                else fontTextEl.innerText = 'حجم الخط';
+            }
+
             if (typeof lucide !== 'undefined') {
                 lucide.createIcons();
             }
@@ -360,7 +393,27 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
             document.getElementById('auth-submit-text').innerText = isAuthLoginMode ? 'دخول' : 'إنشاء حساب';
         }
 
+        window.toggleMobileMenu = () => {
+            const sidebar = document.getElementById('sidebar-nav');
+            const overlay = document.getElementById('mobile-sidebar-overlay');
+            if(sidebar && overlay) {
+                if(sidebar.classList.contains('translate-x-full')) {
+                    sidebar.classList.remove('translate-x-full');
+                    overlay.classList.remove('hidden');
+                    setTimeout(() => overlay.classList.remove('opacity-0'), 10);
+                } else {
+                    sidebar.classList.add('translate-x-full');
+                    overlay.classList.add('opacity-0');
+                    setTimeout(() => overlay.classList.add('hidden'), 300);
+                }
+            }
+        };
+
         window.switchTab = (tab, preserveState = false) => {
+            if(window.innerWidth < 768) {
+                const sidebar = document.getElementById('sidebar-nav');
+                if(sidebar && !sidebar.classList.contains('translate-x-full')) window.toggleMobileMenu();
+            }
             if (tab === 'communities' && !preserveState) activeCommunityId = null;
             if (tab === 'messages' && !activeChatFriendId) activeChatFriendId = null; 
             if (tab !== 'profile') {
@@ -544,6 +597,16 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
 
         // --- Sidebar Logic ---
         function updateSidebar() {
+            const logoImgs = document.querySelectorAll('.global-logo-img');
+            const defaultLogo = "https://i.ibb.co/93y8GcxZ/Picsart-26-05-09-16-59-08-419.png";
+            logoImgs.forEach(img => {
+                if (globalSettings && globalSettings.logoUrl && globalSettings.logoUrl.trim() !== '') {
+                    img.src = globalSettings.logoUrl;
+                } else {
+                    img.src = defaultLogo;
+                }
+            });
+
             if(!userData) return;
             document.getElementById('sidebar-myid').innerText = userData.myTabId;
             document.getElementById('mobile-myid').innerText = userData.myTabId;
@@ -577,6 +640,35 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
             }
         }
 
+        window.playNotificationSound = () => {
+            try {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                if (!AudioContext) return;
+                const ctx = new AudioContext();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                
+                osc.type = 'sine';
+                // تردد مريح للأذن (صوت بيب ناعم يشبه فيسبوك)
+                osc.frequency.setValueAtTime(600, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(800, ctx.currentTime + 0.1);
+                
+                gain.gain.setValueAtTime(0, ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.1, ctx.currentTime + 0.05);
+                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+                
+                osc.start(ctx.currentTime);
+                osc.stop(ctx.currentTime + 0.2);
+            } catch(e) {
+                // تجاهل الخطأ إذا كان المتصفح يمنع الصوت التلقائي قبل تفاعل المستخدم
+            }
+        };
+
+        let lastTotalUnreadCount = -1;
+
         function updateBadge() {
             if(!currentUser) return;
             const incReqs = friendRequests.filter(r => r.to === currentUser.uid && r.status === 'pending').length;
@@ -594,6 +686,13 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
             if(notifBadge) {
                 if(unreadNotifs>0) { notifBadge.classList.remove('hidden'); notifBadge.innerText=unreadNotifs; } else notifBadge.classList.add('hidden');
             }
+
+            const currentTotal = incReqs + unreadMsgs + unreadNotifs;
+            // تشغيل الصوت فقط إذا زاد عدد الإشعارات (وليس عند التحميل الأول)
+            if (lastTotalUnreadCount !== -1 && currentTotal > lastTotalUnreadCount) {
+                window.playNotificationSound();
+            }
+            lastTotalUnreadCount = currentTotal;
         }
 
         window.copyMyId = () => { navigator.clipboard.writeText(userData.myTabId).then(()=>showToast('تم نسخ المعرف بنجاح!', 'success')).catch(()=>{showToast('فشل النسخ', 'error')}); }
@@ -781,6 +880,43 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
             });
         };
 
+        window.saveGlobalLogo = async () => {
+            const fileInput = document.getElementById('admin-global-logo-input');
+            const file = fileInput.files[0];
+            if (!file) return showToast('يرجى اختيار صورة الشعار أولاً', 'error');
+
+            const btn = document.getElementById('admin-save-logo-btn');
+            btn.disabled = true; btn.innerHTML = '<i class="loader"></i> جاري...';
+
+            try {
+                const imgUrl = await uploadToImgbb(file);
+                await setDoc(doc(db, 'artifacts', appIdStr, 'public', 'data', 'settings', 'global'), {
+                    ...globalSettings,
+                    logoUrl: imgUrl
+                }, { merge: true });
+                showToast('تم تحديث الشعار بنجاح!', 'success');
+                fileInput.value = '';
+            } catch(e) {
+                showToast('حدث خطأ أثناء الرفع', 'error');
+            }
+            btn.disabled = false; btn.innerHTML = '<i data-lucide="upload-cloud" class="w-4 h-4"></i> رفع وحفظ';
+            lucide.createIcons();
+        };
+
+        window.removeGlobalLogo = async () => {
+            showConfirm('هل أنت متأكد من مسح الشعار المخصص واستعادة الشعار الافتراضي؟', async () => {
+                try {
+                    await setDoc(doc(db, 'artifacts', appIdStr, 'public', 'data', 'settings', 'global'), {
+                        ...globalSettings,
+                        logoUrl: ''
+                    }, { merge: true });
+                    showToast('تمت استعادة الشعار الافتراضي', 'success');
+                } catch(e) {
+                    showToast('حدث خطأ', 'error');
+                }
+            });
+        };
+
         window.adminToggleBanUser = async (uid, currentBanState) => {
             if (uid === currentUser.uid) return showToast('لا يمكنك حظر نفسك!', 'error');
             const actionStr = currentBanState ? 'فك الحظر عن' : 'حظر';
@@ -866,12 +1002,9 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
                 statsHTML = `<div class="flex items-center justify-between mb-2 px-1 border-b border-black/5 dark:border-white/5 pb-2 mt-2">
                     <div onclick="window.showReactors('${post.id}')" class="flex items-center gap-1.5 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 rounded-lg transition-colors w-fit px-1">
                         ${tReact > 0 ? `
-                        <div class="flex -space-x-1 rtl:space-x-reverse">
-                            ${Object.values(reactions).includes('heart') ? `<i data-lucide="heart" class="w-3.5 h-3.5 text-rose-500 fill-current bg-white dark:bg-slate-800 rounded-full shadow-sm border dark:border-slate-700"></i>` : ''}
-                            ${Object.values(reactions).includes('like') ? `<i data-lucide="thumbs-up" class="w-3.5 h-3.5 text-blue-500 dark:text-blue-400 bg-white dark:bg-slate-800 rounded-full shadow-sm border dark:border-slate-700"></i>` : ''}
-                            ${Object.values(reactions).includes('sad') ? `<i data-lucide="frown" class="w-3.5 h-3.5 text-amber-500 dark:text-amber-400 bg-white dark:bg-slate-800 rounded-full shadow-sm border dark:border-slate-700"></i>` : ''}
-                            ${Object.values(reactions).includes('angry') ? `<i data-lucide="angry" class="w-3.5 h-3.5 text-red-600 dark:text-red-400 bg-white dark:bg-slate-800 rounded-full shadow-sm border dark:border-slate-700"></i>` : ''}
-                        </div><span class="text-[12px] md:text-[13px] text-slate-500 dark:text-slate-400 font-medium">${tReact} &bull; ${reactNames}</span>
+                        <div class="flex -space-x-1.5 rtl:space-x-reverse z-0">
+                            ${[...new Set(Object.values(reactions))].slice(0,3).map(r => `<div class="w-6 h-6 flex items-center justify-center bg-white dark:bg-slate-800 rounded-full shadow-sm border border-slate-200 dark:border-slate-700 shrink-0 z-10">${window.getReactionIconStr(r)}</div>`).join('')}
+                        </div><span class="text-sm md:text-[15px] mr-2 text-slate-500 dark:text-slate-400 font-bold">${tReact} &bull; ${reactNames}</span>
                         ` : ''}
                     </div>
                     ${shareCount > 0 ? `<div class="text-[11px] md:text-[12px] text-slate-500 dark:text-slate-400 font-medium cursor-help flex items-center gap-1 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors" title="شارك بواسطة: ${reposts.map(r=>r.authorName).join('، ')}">${shareCount} مشاركة (${shareNames}) <i data-lucide="repeat" class="w-3.5 h-3.5"></i></div>` : ''}
@@ -922,14 +1055,16 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
                 `}
                 ${statsHTML}
                 <div class="flex flex-wrap items-center gap-1.5 relative">
-                    <div id="${idPrefix}picker-${post.id}" class="reaction-picker absolute -top-12 right-0 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-lg rounded-full px-2.5 py-1.5 gap-2 z-10 animate-in fade-in zoom-in duration-200">
-                        <button onclick="window.handleReact('${post.id}', 'like', '${idPrefix}')" class="hover:scale-125 transition-transform"><i data-lucide="thumbs-up" class="w-[20px] h-[20px] text-blue-500 dark:text-blue-400"></i></button>
-                        <button onclick="window.handleReact('${post.id}', 'heart', '${idPrefix}')" class="hover:scale-125 transition-transform"><i data-lucide="heart" class="w-[20px] h-[20px] text-rose-500 dark:text-rose-400 fill-current"></i></button>
-                        <button onclick="window.handleReact('${post.id}', 'sad', '${idPrefix}')" class="hover:scale-125 transition-transform"><i data-lucide="frown" class="w-[20px] h-[20px] text-amber-500 dark:text-amber-400"></i></button>
-                        <button onclick="window.handleReact('${post.id}', 'angry', '${idPrefix}')" class="hover:scale-125 transition-transform"><i data-lucide="angry" class="w-[20px] h-[20px] text-red-600 dark:text-red-400"></i></button>
+                    <div id="${idPrefix}picker-${post.id}" class="reaction-picker absolute -top-14 right-0 bg-white dark:bg-slate-800 shadow-xl border border-slate-200 dark:border-slate-700 rounded-full px-3 py-2 gap-3 z-20 animate-in fade-in zoom-in duration-200">
+                        <button onclick="window.handleReact('${post.id}', '👍', '${idPrefix}')" class="text-2xl hover:scale-125 transition-transform">👍</button>
+                        <button onclick="window.handleReact('${post.id}', '❤️', '${idPrefix}')" class="text-2xl hover:scale-125 transition-transform">❤️</button>
+                        <button onclick="window.handleReact('${post.id}', '😂', '${idPrefix}')" class="text-2xl hover:scale-125 transition-transform">😂</button>
+                        <button onclick="window.handleReact('${post.id}', '😮', '${idPrefix}')" class="text-2xl hover:scale-125 transition-transform">😮</button>
+                        <button onclick="window.handleReact('${post.id}', '😢', '${idPrefix}')" class="text-2xl hover:scale-125 transition-transform">😢</button>
+                        <button onclick="window.handleReact('${post.id}', '🙏', '${idPrefix}')" class="text-2xl hover:scale-125 transition-transform">🙏</button>
                     </div>
-                    <button onclick="window.togglePicker('${post.id}', '${idPrefix}')" class="flex-1 min-w-[70px] flex justify-center items-center gap-1.5 py-1.5 rounded-xl text-[13px] font-bold bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 transition-colors ${myReact ? getRColor(myReact) : 'text-slate-600 dark:text-slate-300'}">
-                        <i data-lucide="${myReact?getRIconName(myReact):'thumbs-up'}" class="w-[18px] h-[18px] ${myReact==='heart'?'fill-current':''}"></i> <span>${myReact?'تفاعلت':'تفاعل'}</span>
+                    <button onclick="window.togglePicker('${post.id}', '${idPrefix}')" class="flex-1 min-w-[70px] flex justify-center items-center gap-1.5 py-1.5 rounded-xl text-[13px] font-bold bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 transition-colors ${myReact && ['like','heart','sad','angry'].includes(myReact) ? getRColor(myReact) : (myReact ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-600 dark:text-slate-300')}">
+                        ${myReact ? (['like','heart','sad','angry'].includes(myReact) ? `<i data-lucide="${getRIconName(myReact)}" class="w-[18px] h-[18px] ${myReact==='heart'?'fill-current text-rose-500':''}"></i>` : `<span class="text-lg leading-none">${myReact}</span>`) : `<i data-lucide="thumbs-up" class="w-[18px] h-[18px]"></i>`} <span>${myReact ? 'تفاعلت' : 'تفاعل'}</span>
                     </button>
                     <button onclick="document.getElementById('${idPrefix}c-input-${post.id}').focus()" class="flex-1 min-w-[70px] flex justify-center items-center gap-1.5 py-1.5 rounded-xl text-[13px] font-bold text-slate-600 dark:text-slate-300 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 transition-colors">
                         <i data-lucide="message-square" class="w-[18px] h-[18px]"></i> <span>تعليق</span>
@@ -973,31 +1108,45 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
             const canDeleteComment = c.authorId === currentUser.uid || canDeletePost;
             
             const isReply = c.parentId != null;
-            const avatarSize = isReply ? 'w-6 h-6 md:w-7 md:h-7' : 'w-8 h-8 md:w-9 md:h-9';
+            const avatarSize = isReply ? 'w-8 h-8 md:w-9 md:h-9' : 'w-10 h-10 md:w-11 md:h-11';
+
+            // حساب الوقت بطريقة فيسبوك
+            const d = new Date(c.createdAt);
+            const now = new Date();
+            const diffMs = now - d;
+            const diffMins = Math.floor(diffMs / 60000);
+            const diffHours = Math.floor(diffMins / 60);
+            const diffDays = Math.floor(diffHours / 24);
+            let timeAgo = '';
+            if (diffMins < 1) timeAgo = 'الآن';
+            else if (diffMins < 60) timeAgo = diffMins + ' د';
+            else if (diffHours < 24) timeAgo = diffHours + ' س';
+            else if (diffDays < 7) timeAgo = diffDays + ' ي';
+            else timeAgo = d.toLocaleDateString('ar-EG', {month: 'short', day: 'numeric'});
 
             return `
-            <div id="${idPrefix}comment-${c.id}" class="flex gap-2 items-start group relative scroll-mt-32 mb-1.5 w-full">
-                <img src="${aPic}" onclick="window.viewProfile('${c.authorId}')" class="${avatarSize} rounded-full border border-black/10 dark:border-white/10 mt-0.5 object-cover bg-white dark:bg-slate-800 cursor-pointer hover:opacity-80 transition-opacity shrink-0">
+            <div id="${idPrefix}comment-${c.id}" class="flex gap-2 items-start group relative scroll-mt-32 mb-3 w-full">
+                <img src="${aPic}" onclick="window.viewProfile('${c.authorId}')" class="${avatarSize} rounded-full mt-1 object-cover bg-slate-200 dark:bg-slate-700 cursor-pointer hover:opacity-80 transition-opacity shrink-0 shadow-sm">
                 <div class="flex-1 min-w-0 flex items-center justify-between gap-2">
-                    <div class="flex-1 min-w-0">
-                        <div class="bg-white/60 dark:bg-slate-700/60 border border-black/5 dark:border-white/5 px-3 py-2 rounded-2xl rounded-tr-none inline-block relative cursor-pointer hover:bg-white/80 dark:hover:bg-slate-700/80 transition-colors" onclick="document.getElementById('${idPrefix}cpicker-${c.id}').classList.toggle('show')">
-                            <span onclick="event.stopPropagation(); window.viewProfile('${c.authorId}')" class="font-bold text-slate-800 dark:text-slate-200 text-[12px] md:text-[13px] flex items-center mb-0.5 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors gap-1">${aName}${window.getUserBadge(c.authorId)}</span>
-                            <p class="text-slate-700 dark:text-slate-300 text-[13px] leading-snug break-words">${c.text}</p>
+                    <div class="flex-1 min-w-0 flex flex-col items-start">
+                        <div class="bg-slate-100 dark:bg-[#3A3B3C] border border-black/5 dark:border-white/5 px-4 py-2.5 rounded-2xl rounded-tr-sm inline-block relative cursor-pointer hover:bg-slate-200 dark:hover:bg-[#4E4F50] transition-colors shadow-sm" onclick="document.getElementById('${idPrefix}cpicker-${c.id}').classList.toggle('show')">
+                            <span onclick="event.stopPropagation(); window.viewProfile('${c.authorId}')" class="font-extrabold text-slate-900 dark:text-slate-100 text-[14px] md:text-[15px] flex items-center mb-0.5 hover:underline transition-colors gap-1">${aName}${window.getUserBadge(c.authorId)}</span>
+                            <p class="text-slate-900 dark:text-slate-100 text-[14px] md:text-[15px] font-bold leading-snug break-words">${c.text}</p>
                             
-                            <div id="${idPrefix}cpicker-${c.id}" class="reaction-picker absolute -top-12 right-0 bg-white dark:bg-slate-800 shadow-xl border border-slate-200 dark:border-slate-700 rounded-full px-3 py-2 gap-2 z-20" onclick="event.stopPropagation()">
-                                <button onclick="window.handleCReact('${post.id}', '${c.id}', '👍', '${idPrefix}')" class="text-lg hover:scale-125 transition-transform">👍</button>
-                                <button onclick="window.handleCReact('${post.id}', '${c.id}', '❤️', '${idPrefix}')" class="text-lg hover:scale-125 transition-transform">❤️</button>
-                                <button onclick="window.handleCReact('${post.id}', '${c.id}', '😂', '${idPrefix}')" class="text-lg hover:scale-125 transition-transform">😂</button>
-                                <button onclick="window.handleCReact('${post.id}', '${c.id}', '😮', '${idPrefix}')" class="text-lg hover:scale-125 transition-transform">😮</button>
-                                <button onclick="window.handleCReact('${post.id}', '${c.id}', '😢', '${idPrefix}')" class="text-lg hover:scale-125 transition-transform">😢</button>
-                                <button onclick="window.handleCReact('${post.id}', '${c.id}', '🙏', '${idPrefix}')" class="text-lg hover:scale-125 transition-transform">🙏</button>
+                            <div id="${idPrefix}cpicker-${c.id}" class="reaction-picker absolute -top-14 right-0 bg-white dark:bg-slate-800 shadow-xl border border-slate-200 dark:border-slate-700 rounded-full px-3 py-2 gap-3 z-20" onclick="event.stopPropagation()">
+                                <button onclick="window.handleCReact('${post.id}', '${c.id}', '👍', '${idPrefix}')" class="text-2xl hover:scale-125 transition-transform">👍</button>
+                                <button onclick="window.handleCReact('${post.id}', '${c.id}', '❤️', '${idPrefix}')" class="text-2xl hover:scale-125 transition-transform">❤️</button>
+                                <button onclick="window.handleCReact('${post.id}', '${c.id}', '😂', '${idPrefix}')" class="text-2xl hover:scale-125 transition-transform">😂</button>
+                                <button onclick="window.handleCReact('${post.id}', '${c.id}', '😮', '${idPrefix}')" class="text-2xl hover:scale-125 transition-transform">😮</button>
+                                <button onclick="window.handleCReact('${post.id}', '${c.id}', '😢', '${idPrefix}')" class="text-2xl hover:scale-125 transition-transform">😢</button>
+                                <button onclick="window.handleCReact('${post.id}', '${c.id}', '🙏', '${idPrefix}')" class="text-2xl hover:scale-125 transition-transform">🙏</button>
                             </div>
                         </div>
-                        <div class="flex items-center gap-3 mt-0.5 px-2 relative">
-                            <button onclick="document.getElementById('${idPrefix}cpicker-${c.id}').classList.toggle('show')" class="text-[11px] font-bold transition-colors hover:underline ${myR?'text-emerald-600 dark:text-emerald-400':'text-slate-500 dark:text-slate-400'}">${myR && !['like','heart','sad','angry'].includes(myR) ? myR : 'تفاعل'}</button>
-                            <button onclick="window.replyToComment('${post.id}', '${rootCommentId || c.id}', '${aName}', '${idPrefix}')" class="text-[11px] font-bold text-slate-500 dark:text-slate-400 hover:text-emerald-600 transition-colors hover:underline">رد</button>
-                            <span class="text-[10px] text-slate-400 dark:text-slate-500">${new Date(c.createdAt).toLocaleDateString('ar-EG', {hour:'2-digit', minute:'2-digit'})}</span>
-                            ${tR>0 ? `<div onclick="window.showCommentReactors('${post.id}', '${c.id}')" class="flex items-center gap-0.5 bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 shadow-sm rounded-full px-1 py-0.5 absolute left-2 -top-3 text-[10px] text-slate-500 dark:text-slate-400 cursor-pointer hover:scale-110 transition-transform"><i data-lucide="heart" class="w-3 h-3 text-rose-500 dark:text-rose-400 fill-current"></i><span class="ml-0.5 font-bold">${tR}</span></div>`:''}
+                        <div class="flex items-center gap-4 mt-1.5 px-3 relative w-full">
+                            <span class="text-[12px] md:text-[13px] font-bold text-slate-500 dark:text-slate-400 hover:underline cursor-pointer">${timeAgo}</span>
+                            <button onclick="document.getElementById('${idPrefix}cpicker-${c.id}').classList.toggle('show')" class="text-[13px] md:text-[14px] font-extrabold transition-colors flex items-center gap-1.5 hover:underline ${myR && ['like','heart','sad','angry'].includes(myR) ? 'text-blue-600 dark:text-blue-400' : (myR ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-[#B0B3B8]')}">${myR ? (['like','heart','sad','angry'].includes(myR) ? 'تفاعلت' : `<span class="text-base leading-none drop-shadow-sm">${myR}</span> تفاعلت`) : 'تفاعل'}</button>
+                            <button onclick="window.replyToComment('${post.id}', '${rootCommentId || c.id}', '${aName}', '${idPrefix}')" class="text-[13px] md:text-[14px] font-extrabold text-slate-500 dark:text-[#B0B3B8] hover:text-slate-700 dark:hover:text-slate-200 transition-colors hover:underline">رد</button>
+                            ${tR>0 ? `<div onclick="window.showCommentReactors('${post.id}', '${c.id}')" class="flex items-center gap-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-md rounded-full px-2.5 py-1 absolute left-0 -top-6 text-sm text-slate-600 dark:text-slate-300 cursor-pointer hover:scale-110 transition-transform"><div class="flex items-center justify-center">${window.getReactionIconStr(Object.values(reacts)[0])}</div><span class="font-bold">${tR}</span></div>`:''}
                         </div>
                     </div>
                     ${canDeleteComment ? `<div class="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 shrink-0" dir="ltr"><button onclick="window.deleteComment('${post.id}', '${c.id}')" class="text-rose-500 p-2 bg-rose-50 dark:bg-rose-900/30 hover:bg-rose-100 dark:hover:bg-rose-900/50 rounded-full transition-colors" title="حذف التعليق"><i data-lucide="trash-2" class="w-4 h-4"></i></button>${c.authorId === currentUser.uid ? `<button onclick="window.openEditModal('${c.id}', 'comment')" class="text-emerald-600 p-2 bg-emerald-50 dark:bg-emerald-900/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 rounded-full transition-colors" title="تعديل التعليق"><i data-lucide="edit-3" class="w-4 h-4"></i></button>` : ''}</div>` : ''}
@@ -1016,12 +1165,11 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
         function getRIconName(type) { return {like:'thumbs-up', heart:'heart', sad:'frown', angry:'angry'}[type] || 'thumbs-up'; }
         
         window.getReactionIconStr = (type) => {
-            if(type==='like') return '<i data-lucide="thumbs-up" class="w-5 h-5 text-blue-500 dark:text-blue-400"></i>';
-            if(type==='heart') return '<i data-lucide="heart" class="w-5 h-5 text-rose-500 dark:text-rose-400 fill-current"></i>';
-            if(type==='sad') return '<i data-lucide="frown" class="w-5 h-5 text-amber-500 dark:text-amber-400"></i>';
-            if(type==='angry') return '<i data-lucide="angry" class="w-5 h-5 text-red-600 dark:text-red-400"></i>';
-            if(['👍','❤️','😂','😮','😢','🙏'].includes(type)) return `<span class="text-xl leading-none">${type}</span>`;
-            return '';
+            if(type==='like') return '<i data-lucide="thumbs-up" class="w-4 h-4 text-blue-500 dark:text-blue-400"></i>';
+            if(type==='heart') return '<i data-lucide="heart" class="w-4 h-4 text-rose-500 dark:text-rose-400 fill-current"></i>';
+            if(type==='sad') return '<i data-lucide="frown" class="w-4 h-4 text-amber-500 dark:text-amber-400"></i>';
+            if(type==='angry') return '<i data-lucide="angry" class="w-4 h-4 text-red-600 dark:text-red-400"></i>';
+            return `<span class="text-sm leading-none">${type}</span>`;
         }
 
         window.togglePicker = (postId, idPrefix = '') => {
@@ -1273,7 +1421,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
                         <img src="${u.photoUrl}" class="w-10 h-10 rounded-full object-cover bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600">
                         <span class="font-bold text-sm text-slate-700 dark:text-slate-200">${u.displayName}</span>
                     </div>
-                    <div class="bg-slate-100 dark:bg-slate-700 p-2 rounded-full shadow-sm">${window.getReactionIconStr(rType)}</div>
+                    <div class="bg-slate-100 dark:bg-slate-700 flex items-center justify-center rounded-full shadow-sm w-9 h-9 text-xl">${window.getReactionIconStr(rType)}</div>
                 </div>`;
             }).join('');
             if(!list.innerHTML) list.innerHTML = '<p class="text-center text-slate-500 dark:text-slate-400 py-4">لا يوجد تفاعلات.</p>';
@@ -1297,7 +1445,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
                         <img src="${u.photoUrl}" class="w-10 h-10 rounded-full object-cover bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600">
                         <span class="font-bold text-sm text-slate-700 dark:text-slate-200">${u.displayName}</span>
                     </div>
-                    <div class="bg-slate-100 dark:bg-slate-700 p-2 rounded-full shadow-sm">${window.getReactionIconStr(rType)}</div>
+                    <div class="bg-slate-100 dark:bg-slate-700 flex items-center justify-center rounded-full shadow-sm w-9 h-9 text-xl">${window.getReactionIconStr(rType)}</div>
                 </div>`;
             }).join('');
             if(!list.innerHTML) list.innerHTML = '<p class="text-center text-slate-500 dark:text-slate-400 py-4">لا يوجد تفاعلات.</p>';
@@ -1384,33 +1532,33 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
                 const originalTitle = op.isRepost ? op.originalTitle : (op.title || '');
                 const imageUrl = op.imageUrl || null;
                 
-                                const newPostRef = doc(collection(db, 'artifacts', appIdStr, 'public', 'data', 'posts'));
-                await setDoc(newPostRef, {
-                    authorId: currentUser.uid, 
-                    authorName: userData.displayName, 
-                    authorPhoto: userData.photoUrl,
-                    isRepost: true,
-                    originalPostId: originalId,
-                    originalAuthorId: originalAuthorId,
-                    originalAuthorName: originalAuthorName,
-                    originalAuthorPhoto: originalAuthorPhoto,
-                    originalContent: originalContent,
-                    originalTitle: originalTitle,
-                    content: userContent,
-                    imageUrl: imageUrl, 
-                    colorId: op.colorId || 'white', 
-                    communityId: null, 
-                    createdAt: new Date().toISOString(), 
-                    reactions: {}, 
-                    comments: []
-                });
-                showToast('تمت المشاركة على صفحتك بنجاح', 'success');
-                
-                if (originalAuthorId !== currentUser.uid) {
-                    await setDoc(doc(collection(db, 'artifacts', appIdStr, 'public', 'data', 'notifications')), {
-                        to: originalAuthorId, from: currentUser.uid, type: 'repost', postId: newPostRef.id, read: false, createdAt: new Date().toISOString()
-                    });
-                }
+                                const newPostRef = doc(collection(db, 'artifacts', appIdStr, 'public', 'data', 'posts'));
+                await setDoc(newPostRef, {
+                    authorId: currentUser.uid, 
+                    authorName: userData.displayName, 
+                    authorPhoto: userData.photoUrl,
+                    isRepost: true,
+                    originalPostId: originalId,
+                    originalAuthorId: originalAuthorId,
+                    originalAuthorName: originalAuthorName,
+                    originalAuthorPhoto: originalAuthorPhoto,
+                    originalContent: originalContent,
+                    originalTitle: originalTitle,
+                    content: userContent,
+                    imageUrl: imageUrl, 
+                    colorId: op.colorId || 'white', 
+                    communityId: null, 
+                    createdAt: new Date().toISOString(), 
+                    reactions: {}, 
+                    comments: []
+                });
+                showToast('تمت المشاركة على صفحتك بنجاح', 'success');
+                
+                if (originalAuthorId !== currentUser.uid) {
+                    await setDoc(doc(collection(db, 'artifacts', appIdStr, 'public', 'data', 'notifications')), {
+                        to: originalAuthorId, from: currentUser.uid, type: 'repost', postId: newPostRef.id, read: false, createdAt: new Date().toISOString()
+                    });
+                }
                 window.closeRepostModal();
             } catch(e) {
                 showToast('حدث خطأ أثناء المشاركة', 'error');
@@ -2042,7 +2190,9 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
                     canvas.width = width; canvas.height = height;
                     const ctx = canvas.getContext('2d');
                     ctx.drawImage(img, 0, 0, width, height);
-                    window.chatImageBase64 = canvas.toDataURL('image/jpeg', 0.6); 
+                    // الحفاظ على شفافية الـ PNG أو استخدام JPEG للصور العادية لتقليل الحجم
+                    const outType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+                    window.chatImageBase64 = canvas.toDataURL(outType, 0.7); 
                     document.getElementById('chat-image-preview-container').classList.remove('hidden');
                     document.getElementById('chat-image-preview').src = window.chatImageBase64;
                 };
@@ -2065,6 +2215,13 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
             document.getElementById('chat-room-avatar').src = friend.photoUrl;
             document.getElementById('chat-room-name').innerHTML = friend.displayName + window.getUserBadge(friend.uid);
             const msgsArea = document.getElementById('chat-messages-area');
+            
+            // إغلاق أي قائمة تفاعل مفتوحة إذا تم الضغط في أي مساحة فارغة في المحادثة
+            msgsArea.onclick = (e) => {
+                if(!e.target.closest('.msg-bubble-container')) {
+                    document.querySelectorAll('[id^="msg-picker-"]').forEach(p => p.classList.add('hidden'));
+                }
+            };
             const fMsgs = allMessages.filter(m => (m.senderId === currentUser.uid && m.receiverId === friend.uid) || (m.senderId === friend.uid && m.receiverId === currentUser.uid)).sort((a,b) => new Date(a.createdAt) - new Date(b.createdAt));
             fMsgs.filter(m => m.receiverId === currentUser.uid && !m.read).forEach(async m => { try { await updateDoc(doc(db, 'artifacts', appIdStr, 'public', 'data', 'messages', m.id), { read: true }); } catch(e) {} });
             let html = '', lastDate = '';
@@ -2080,64 +2237,74 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
                 const delBtn = isMe ? `<button onclick="window.deleteMessage('${m.id}')" class="text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity p-1 bg-rose-50 dark:bg-rose-900/30 rounded-full hover:bg-rose-100 mx-1" title="حذف الرسالة"><i data-lucide="trash-2" class="w-3 h-3"></i></button>` : '';
                 
                 let reactsHtml = '';
+                let hasReacts = false;
                 if(m.reactions && Object.keys(m.reactions).length > 0) {
+                    hasReacts = true;
                     const rCounts = {};
                     Object.values(m.reactions).forEach(e => rCounts[e] = (rCounts[e]||0)+1);
-                    reactsHtml = `<div class="absolute ${isMe?'-bottom-3 right-2':'-bottom-3 left-2'} flex gap-1 bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 rounded-full px-1.5 py-0.5 text-[10px] z-10 select-none">` + 
-                        Object.keys(rCounts).map(e => `<span class="flex items-center gap-0.5">${e}${rCounts[e]>1?` <span class="font-bold text-slate-500">${rCounts[e]}</span>`:''}</span>`).join('') + 
+                    reactsHtml = `<div class="absolute ${isMe?'-bottom-3 right-2':'-bottom-3 left-2'} flex gap-1 bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 rounded-full px-2 py-0.5 text-sm md:text-base z-10 select-none items-center">` + 
+                        Object.keys(rCounts).map(e => `<span class="flex items-center gap-1">${e}${rCounts[e]>1?` <span class="font-bold text-slate-500 text-xs">${rCounts[e]}</span>`:''}</span>`).join('') + 
                         `</div>`;
                 }
 
-                const reactBtn = `<div class="relative group/picker mx-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button class="text-slate-400 hover:text-emerald-500 p-1 bg-slate-50 dark:bg-slate-800 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" onclick="document.getElementById('msg-picker-${m.id}').classList.toggle('hidden')"><i data-lucide="smile" class="w-3 h-3"></i></button>
-                    <div id="msg-picker-${m.id}" class="hidden absolute bottom-full mb-1 ${isMe?'right-0':'left-0'} bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-xl rounded-2xl p-2 z-20 w-[180px] grid grid-cols-5 gap-1">
-                        ${msgEmojis.map(e => `<button onclick="window.reactToMessage('${m.id}', '${e}')" class="hover:bg-slate-100 dark:hover:bg-slate-700 p-1 rounded-lg text-base hover:scale-125 transition-transform flex justify-center items-center">${e}</button>`).join('')}
-                    </div>
+                const msgPickerHtml = `<div id="msg-picker-${m.id}" class="hidden absolute bottom-[calc(100%+5px)] ${isMe?'right-0':'left-0'} bg-white/95 dark:bg-slate-800/95 backdrop-blur-md border border-slate-200 dark:border-slate-700 shadow-lg rounded-full px-2 py-1.5 z-30 flex items-center gap-1.5 animate-in zoom-in duration-200 w-max" onclick="event.stopPropagation()">
+                    ${['❤️','😂','👍','😮','😢','🙏'].map(e => `<button onclick="window.reactToMessage('${m.id}', '${e}')" class="hover:bg-slate-100 dark:hover:bg-slate-700 w-8 h-8 rounded-full text-lg hover:scale-125 transition-transform flex justify-center items-center">${e}</button>`).join('')}
                 </div>`;
+                const clickAction = `onclick="document.querySelectorAll('[id^=\\'msg-picker-\\']').forEach(el => { if(el.id !== 'msg-picker-${m.id}') el.classList.add('hidden') }); document.getElementById('msg-picker-${m.id}').classList.toggle('hidden')"`;
+                
+                // تزويد المساحة السفلية في حالة وجود تفاعل عشان ميغطيش النص
+                const bubblePadding = hasReacts ? 'px-4 pt-2.5 pb-4' : 'px-4 py-2.5';
+                const sharedBubblePadding = hasReacts ? 'px-3 pt-2.5 pb-4' : 'px-3 py-2.5';
 
                 if (m.type === 'sticker') {
-                    html += `<div class="flex flex-col ${isMe ? 'items-end' : 'items-start'} mb-4 group relative"><div class="relative"><div class="text-[40px] leading-none mb-1 cursor-default hover:scale-110 transition-transform">${m.content}</div>${reactsHtml}</div><div class="flex items-center mt-1">${delBtn}${reactBtn}<span class="text-[10px] text-slate-400 px-1 font-medium" dir="ltr">${timeStr}</span>${readIcon}</div></div>`;
+                    html += `<div class="flex flex-col ${isMe ? 'items-end' : 'items-start'} mb-4 group relative"><div class="relative cursor-pointer msg-bubble-container" ${clickAction}>${msgPickerHtml}<div class="text-[40px] leading-none mb-1 hover:scale-110 transition-transform">${m.content}</div>${reactsHtml}</div><div class="flex items-center mt-1">${delBtn}<span class="text-[10px] text-slate-400 px-1 font-medium" dir="ltr">${timeStr}</span>${readIcon}</div></div>`;
                 } else if (m.type === 'post_share') {
                     const sp = allPosts.find(p => p.id === m.content);
                     let sharedHtml = '';
                     if(sp) {
-                        let contextBadge = '';
+                        let contextName = 'المساحات العامة';
+                        let contextIcon = 'globe';
                         if (sp.communityId) {
                             const comm = allCommunities.find(c => c.id === sp.communityId);
-                            contextBadge = `<div class="text-[10px] bg-emerald-100/80 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-400 px-2 py-0.5 rounded-full flex items-center gap-1 shrink-0" title="مشاركة من مجتمع"><i data-lucide="layers" class="w-3 h-3"></i> <span class="truncate max-w-[80px] md:max-w-[100px]">${comm ? comm.name : 'مجتمع'}</span></div>`;
-                        } else {
-                            contextBadge = `<div class="text-[10px] bg-slate-100/80 dark:bg-slate-700/80 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-full flex items-center gap-1 shrink-0" title="مشاركة من المساحة العامة"><i data-lucide="home" class="w-3 h-3"></i> المساحة العامة</div>`;
+                            contextName = comm ? comm.name : 'مجتمع';
+                            contextIcon = 'layers';
                         }
                         
-                        sharedHtml = `<div class="bg-white/50 dark:bg-slate-800/50 border border-black/10 dark:border-white/10 p-3 rounded-xl mt-2 w-64 md:w-80 cursor-pointer hover:shadow-md transition-shadow" onclick="window.openSinglePost('${sp.id}')">
-                            <div class="flex items-center justify-between gap-2 mb-2">
-                                <div class="flex items-center gap-2 min-w-0">
-                                    <img src="${sp.authorPhoto}" class="w-6 h-6 rounded-full border border-black/10 dark:border-white/10 object-cover shrink-0">
-                                    <span class="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">${sp.authorName}</span>
+                        sharedHtml = `<div class="mt-2 w-60 md:w-64 bg-white dark:bg-slate-800 rounded-xl overflow-hidden shadow-sm border border-black/10 dark:border-white/10 cursor-pointer hover:opacity-90 transition-opacity flex flex-col" onclick="event.stopPropagation(); window.openSinglePost('${sp.id}')">
+                            <div class="bg-slate-100 dark:bg-slate-900/60 px-2.5 py-1.5 flex items-center justify-between text-[10px] font-bold text-slate-500 dark:text-slate-400 border-b border-black/5 dark:border-white/5">
+                                <div class="flex items-center gap-1.5">
+                                    <i data-lucide="${contextIcon}" class="w-3 h-3"></i> من: ${contextName}
                                 </div>
-                                ${contextBadge}
+                                <i data-lucide="external-link" class="w-3 h-3 opacity-70"></i>
                             </div>
-                            ${sp.title ? `<h4 class="font-extrabold text-sm mb-1 line-clamp-1 text-slate-900 dark:text-white border-r-2 border-emerald-500 pr-1.5">${sp.title}</h4>` : ''}
-                            <p class="text-xs text-slate-600 dark:text-slate-300 line-clamp-2">${sp.content || 'يحتوي على مرفقات'}</p>
+                            <div class="p-2.5 flex flex-col gap-1 text-slate-800 dark:text-slate-100">
+                                <div class="flex items-center gap-1.5 mb-0.5">
+                                    <img src="${sp.authorPhoto}" class="w-5 h-5 rounded-full object-cover">
+                                    <span class="text-[11px] font-bold truncate">${sp.authorName}</span>
+                                </div>
+                                ${sp.title ? `<h4 class="font-extrabold text-xs truncate leading-snug">${sp.title}</h4>` : ''}
+                                <p class="text-[11px] leading-snug line-clamp-2 text-slate-600 dark:text-slate-300 font-medium">${sp.content || 'يحتوي على مرفقات'}</p>
+                            </div>
+                            ${sp.imageUrl ? `<img src="${sp.imageUrl}" class="w-full h-24 object-cover border-t border-black/5 dark:border-white/5">` : ''}
                         </div>`;
                     } else {
-                        sharedHtml = `<div class="p-3 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs text-slate-500 mt-2 border border-slate-200 dark:border-slate-700">هذا المنشور غير متوفر أو تم حذفه</div>`;
+                        sharedHtml = `<div class="p-2.5 bg-white/50 dark:bg-slate-800/50 rounded-xl text-xs text-slate-700 dark:text-slate-300 mt-2 border border-black/10 dark:border-white/10 font-bold">هذا المنشور غير متوفر أو تم حذفه</div>`;
                     }
-                    html += `<div class="flex flex-col ${isMe ? 'items-end' : 'items-start'} mb-4 group relative"><div class="relative"><div class="${isMe ? 'bg-emerald-600 text-white rounded-br-sm' : 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-100 dark:border-slate-600 rounded-tl-sm'} px-4 py-2.5 rounded-2xl max-w-[85%] text-sm md:text-base shadow-sm break-words whitespace-pre-wrap"><div class="flex items-center gap-1.5 opacity-80 text-xs font-bold mb-1 border-b border-black/10 dark:border-white/10 pb-1"><i data-lucide="forward" class="w-3.5 h-3.5 rtl:-scale-x-100"></i> ${isMe?'قمت بمشاركة منشور':'شارك منشوراً معك'}</div>${sharedHtml}</div>${reactsHtml}</div><div class="flex items-center mt-1">${delBtn}${reactBtn}<span class="text-[10px] text-slate-400 px-1 font-medium" dir="ltr">${timeStr}</span>${readIcon}</div></div>`;
+                    html += `<div class="flex flex-col ${isMe ? 'items-end' : 'items-start'} mb-4 group relative w-full"><div class="relative cursor-pointer select-none msg-bubble-container w-fit max-w-[85%]" ${clickAction}>${msgPickerHtml}<div class="${isMe ? 'bg-emerald-600 text-emerald-50 rounded-br-sm' : 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-100 dark:border-slate-600 rounded-tl-sm'} ${sharedBubblePadding} rounded-2xl text-sm shadow-sm break-words whitespace-pre-wrap"><div class="flex items-center gap-1 opacity-90 text-[11px] font-bold mb-0.5"><i data-lucide="forward" class="w-3.5 h-3.5 rtl:-scale-x-100"></i> ${isMe?'أرسلت منشوراً':'شارك منشوراً'}</div>${sharedHtml}</div>${reactsHtml}</div><div class="flex items-center mt-1">${delBtn}<span class="text-[10px] text-slate-400 px-1 font-medium" dir="ltr">${timeStr}</span>${readIcon}</div></div>`;
                 } else {
                     const {ytId, tkId} = extractEmbeds(m.content||'');
                     let messageBody = '';
                     
                     if (m.type === 'image') {
-                        messageBody += `<img src="${m.imageUrl}" class="max-w-full rounded-xl cursor-zoom-in mb-2" onclick="window.openLightbox('${m.imageUrl}')" style="max-height: 250px;">`;
+                        messageBody += `<img src="${m.imageUrl}" class="max-w-full rounded-xl cursor-zoom-in mb-2" onclick="event.stopPropagation(); window.openLightbox('${m.imageUrl}')" style="max-height: 250px;">`;
                     }
                     if (m.content) {
                         messageBody += formatMessageContent(m.content, isMe);
                     }
-                    if(ytId) messageBody += `<div class="mt-3 rounded-xl overflow-hidden shadow-sm aspect-video min-w-[250px]"><iframe src="https://www.youtube.com/embed/${ytId}" class="w-full h-full" frameborder="0" allowfullscreen></iframe></div>`;
-                    if(tkId) messageBody += `<div class="mt-3 rounded-xl overflow-hidden shadow-sm flex justify-center bg-black/10 dark:bg-slate-800 p-2"><iframe src="https://www.tiktok.com/embed/v2/${tkId}" class="w-full max-w-[200px] h-[350px] rounded-lg" frameborder="0" allowfullscreen></iframe></div>`;
+                    if(ytId) messageBody += `<div class="mt-3 rounded-xl overflow-hidden shadow-sm aspect-video min-w-[250px]" onclick="event.stopPropagation()"><iframe src="https://www.youtube.com/embed/${ytId}" class="w-full h-full" frameborder="0" allowfullscreen></iframe></div>`;
+                    if(tkId) messageBody += `<div class="mt-3 rounded-xl overflow-hidden shadow-sm flex justify-center bg-black/10 dark:bg-slate-800 p-2" onclick="event.stopPropagation()"><iframe src="https://www.tiktok.com/embed/v2/${tkId}" class="w-full max-w-[200px] h-[350px] rounded-lg" frameborder="0" allowfullscreen></iframe></div>`;
 
-                    html += `<div class="flex flex-col ${isMe ? 'items-end' : 'items-start'} mb-4 group relative"><div class="relative"><div class="${isMe ? 'bg-emerald-600 text-white rounded-br-sm' : 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-100 dark:border-slate-600 rounded-tl-sm'} px-4 py-2.5 rounded-2xl max-w-[85%] text-sm md:text-base shadow-sm break-words whitespace-pre-wrap">${messageBody}</div>${reactsHtml}</div><div class="flex items-center mt-1">${delBtn}${reactBtn}<span class="text-[10px] text-slate-400 px-1 font-medium" dir="ltr">${timeStr}</span>${readIcon}</div></div>`;
+                    html += `<div class="flex flex-col ${isMe ? 'items-end' : 'items-start'} mb-4 group relative w-full"><div class="relative cursor-pointer select-none msg-bubble-container w-fit max-w-[85%]" ${clickAction}>${msgPickerHtml}<div class="${isMe ? 'bg-emerald-600 text-white rounded-br-sm' : 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-100 dark:border-slate-600 rounded-tl-sm'} ${bubblePadding} rounded-2xl text-sm md:text-base shadow-sm break-words whitespace-pre-wrap">${messageBody}</div>${reactsHtml}</div><div class="flex items-center mt-1">${delBtn}<span class="text-[10px] text-slate-400 px-1 font-medium" dir="ltr">${timeStr}</span>${readIcon}</div></div>`;
                 }
             });
             if (!fMsgs.length) html = '<div class="flex-1 flex flex-col items-center justify-center h-full text-slate-400 dark:text-slate-500"><i data-lucide="hand" class="w-12 h-12 mb-3 opacity-50"></i><p>أرسل رسالة لبدء المحادثة!</p></div>';
@@ -2145,6 +2312,14 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
             msgsArea.innerHTML = html; lucide.createIcons();
             if (isAtBottom || html.includes('hand')) msgsArea.scrollTop = msgsArea.scrollHeight;
         }
+
+        window.toggleMsgPicker = (msgId) => {
+            document.querySelectorAll('[id^="msg-picker-"]').forEach(el => {
+                if (el.id !== 'msg-picker-' + msgId) el.classList.add('hidden');
+            });
+            const p = document.getElementById('msg-picker-' + msgId);
+            if (p) p.classList.toggle('hidden');
+        };
 
         window.reactToMessage = async (msgId, emoji) => {
             if(!currentUser) return;
@@ -2160,7 +2335,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
             try { await updateDoc(msgRef, { reactions: reacts }); } catch(e) { showToast('خطأ في التفاعل', 'error'); }
             const picker = document.getElementById(`msg-picker-${msgId}`);
             if(picker) picker.classList.add('hidden');
-        }
+        };
 
         window.deleteEntireChat = async (uid) => {
             showConfirm('هل أنت متأكد من حذف هذه المحادثة بالكامل وإزالتها من القائمة؟ (سيتم الحذف نهائياً)', async () => {
@@ -2681,6 +2856,71 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
             setTimeout(() => { modal.classList.add('hidden'); }, 300);
         }
 
+        // --- Mobile Menu Logic Fix ---
+        window.toggleMobileMenu = () => {
+            let sidebar = document.getElementById('sidebar-nav');
+            if (!sidebar) {
+                sidebar = document.querySelector('nav');
+                if (sidebar) sidebar.id = 'sidebar-nav';
+            }
+            
+            let overlay = document.getElementById('mobile-sidebar-overlay');
+            if (!overlay) {
+                overlay = document.createElement('div');
+                overlay.id = 'mobile-sidebar-overlay';
+                overlay.className = 'hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-30 transition-opacity duration-300 opacity-0';
+                overlay.onclick = window.toggleMobileMenu;
+                const mainLayout = document.getElementById('main-layout');
+                if (mainLayout && sidebar) {
+                    mainLayout.insertBefore(overlay, sidebar);
+                }
+            }
+
+            if(sidebar && overlay) {
+                // إجبار القائمة لتكون عائمة على الموبايل
+                sidebar.classList.remove('w-14');
+                sidebar.classList.add('fixed', 'right-0', 'inset-y-0', 'transform', 'md:translate-x-0', 'md:relative', 'z-50', 'transition-transform', 'duration-300', 'shadow-2xl');
+                
+                if (!sidebar.classList.contains('translate-x-full') && !sidebar.classList.contains('menu-opened')) {
+                     sidebar.classList.add('translate-x-full');
+                }
+
+                if(sidebar.classList.contains('translate-x-full')) {
+                    sidebar.classList.remove('translate-x-full');
+                    sidebar.classList.add('menu-opened');
+                    overlay.classList.remove('hidden');
+                    setTimeout(() => overlay.classList.remove('opacity-0'), 10);
+                } else {
+                    sidebar.classList.add('translate-x-full');
+                    sidebar.classList.remove('menu-opened');
+                    overlay.classList.add('opacity-0');
+                    setTimeout(() => overlay.classList.add('hidden'), 300);
+                }
+            }
+        };
+
+        // إغلاق القائمة تلقائياً عند اختيار تبويب
+        const _originalSwitchTab = window.switchTab;
+        window.switchTab = (tab, preserveState = false) => {
+            if (_originalSwitchTab) _originalSwitchTab(tab, preserveState);
+            if(window.innerWidth < 768) {
+                const sidebar = document.getElementById('sidebar-nav') || document.querySelector('nav');
+                if(sidebar && sidebar.classList.contains('menu-opened')) {
+                    window.toggleMobileMenu();
+                }
+            }
+        };
+
+        // إعداد مبدئي للقائمة عند تحميل الموقع في الموبايل
+        setTimeout(() => {
+            if(window.innerWidth < 768) {
+                const sidebar = document.querySelector('nav');
+                if (sidebar) {
+                    sidebar.classList.add('transform', 'translate-x-full', 'fixed', 'right-0', 'z-50');
+                    sidebar.classList.remove('w-14');
+                }
+            }
+        }, 100);
 
         // ===============================================================
 
